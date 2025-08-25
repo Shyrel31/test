@@ -1,0 +1,84 @@
+import re
+import xml.etree.ElementTree as ET
+
+ID_LINE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_\-\.]*$')
+
+# 1) Gérer les blocs XML, même avec plusieurs balises <Parameter>
+def try_parse_xml_block(xml_text: str) -> ET.Element:
+    xml_text = xml_text.strip()
+    if not xml_text:
+        return ET.fromstring("<EMPTY/>")
+    try:
+        return ET.fromstring(xml_text)  # Un seul bloc XML
+    except ET.ParseError:
+        try:
+            return ET.fromstring(f"<root>{xml_text}</root>")  # Plusieurs balises -> enveloppe dans <root>
+        except ET.ParseError:
+            print("[ERREUR XML] Bloc invalide -> encapsulé dans <ERROR>")
+            return ET.fromstring(f"<ERROR><![CDATA[{xml_text}]]></ERROR>")
+
+# 2) Parse sales.txt -> (order, sales)
+def parse_sales(path: str):
+    entries, order, current_id, buf = {}, [], None, []
+    with open(path, "r", encoding="utf-8") as f:
+        for rawline in f:
+            line = rawline.rstrip("\n")
+            if ID_LINE.match(line.strip()):
+                if current_id is not None:
+                    entries[current_id] = "\n".join(buf).strip()
+                    order.append(current_id)
+                    buf = []
+                current_id = line.strip()
+            else:
+                buf.append(line)
+        if current_id:
+            entries[current_id] = "\n".join(buf).strip()
+            order.append(current_id)
+    return order, entries
+
+# 3) Parse pricer_xmls.txt -> dict {ID: ElementXML}
+def parse_pricer_xmls(path: str) -> dict:
+    entries, current_id, buf = {}, None, []
+    def flush():
+        nonlocal current_id, buf
+        raw_xml = "\n".join(buf).strip()
+        entries[current_id] = try_parse_xml_block(raw_xml)
+        buf.clear()
+    with open(path, "r", encoding="utf-8") as f:
+        for rawline in f:
+            line = rawline.rstrip("\n")
+            if ID_LINE.match(line.strip()):
+                if current_id:
+                    flush()
+                current_id = line.strip()
+                buf = []
+            else:
+                buf.append(line)
+        if current_id:
+            flush()
+    return entries
+
+# 4) Construire le XML final avec <sales> + <pricer>
+def build_dataset(order, sales, xmls, out_path="output_dataset.xml"):
+    dataset = ET.Element("dataset", {"version": "1.0"})
+    for i, id_ in enumerate(order, start=1):
+        sample_id = "S" + str(i).zfill(2)
+        sample = ET.SubElement(dataset, "sample", {"id": sample_id, "req_id": id_})
+
+        # Bloc sales (texte brut)
+        sales_el = ET.SubElement(sample, "sales")
+        sales_el.text = sales.get(id_, "")
+
+        # Bloc pricer (balises XML du fichier pricer)
+        pricer_el = ET.SubElement(sample, "pricer")
+        xmlroot = xmls.get(id_)
+        if xmlroot is None:
+            xmlroot = ET.fromstring("<ERROR/>")
+        if xmlroot.tag == "root":
+            for child in list(xmlroot):
+                pricer_el.append(child)
+        else:
+            pricer_el.append(xmlroot)
+
+    ET.ElementTree(dataset).write(out_path, encoding="utf-8", xml_declaration=True)
+    print(f"✅ Dataset généré : {out_path}")
