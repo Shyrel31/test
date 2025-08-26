@@ -82,3 +82,19 @@ def build_dataset(order, sales, xmls, out_path="output_dataset.xml"):
 
     ET.ElementTree(dataset).write(out_path, encoding="utf-8", xml_declaration=True)
     print(f"✅ Dataset généré : {out_path}")
+def try_parse_xml_block(xml_text: str) -> ET.Element:
+    """
+    On enveloppe systématiquement dans <root> pour éviter les ParseError,
+    car les blocs contiennent presque toujours plusieurs balises <Parameter>.
+    """
+    xml_text = xml_text.strip()
+    if not xml_text:
+        return ET.fromstring("<EMPTY/>")
+    try:
+        # Plus d'essai direct : on force <root> autour de chaque bloc
+        return ET.fromstring(f"<root>{xml_text}</root>")
+    except ET.ParseError:
+        # Si même ça échoue, c'est que le bloc est vraiment corrompu
+        print("[ERREUR XML] Bloc invalide -> encapsulé dans <ERROR>")
+        return ET.fromstring(f"<ERROR><![CDATA[{xml_text}]]></ERROR>")
+
